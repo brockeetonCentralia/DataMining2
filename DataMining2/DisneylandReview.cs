@@ -14,7 +14,7 @@ namespace DataMining2
         [LoadColumn(1)]
         public int Rating { get; set; }
         [LoadColumn(2)]
-        public DateOnly YearMonth { get; set; }
+        public string YearMonth { get; set; }
         [LoadColumn(3)]
         public string ReviewerLocation { get; set; }
         [LoadColumn(4)]
