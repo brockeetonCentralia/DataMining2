@@ -23,14 +23,18 @@ namespace DataMining2
 
             //create a query to get the data
             trainingData = ctx.Data.LoadFromTextFile<DisneylandReview>(dataPath, hasHeader: true, separatorChar: ',');
+
             //build data pipeline (transforming your data into something that works)
-            var pipeline = ctx.Transforms.Text.FeaturizeText("Features", nameof(DisneylandReview.ReviewText))
-                .Append(ctx.MulticlassClassification.Trainers.s(nameof(DisneylandReview.Rating), "Features"));
+
+            var pipeline = ctx.Transforms.Conversion.MapValueToKey(inputColumnName: "Rating", outputColumnName: "Label")
+                .Append(ctx.Transforms.Text.FeaturizeText(inputColumnName: "ReviewText", outputColumnName: "FeaturizedReviewText"))
+                .Append(ctx.Transforms.Concatenate("Features", "FeaturizedReviewText"))
+                .AppendCacheCheckpoint(ctx)
+                .Append(ctx.MulticlassClassification.Trainers.SdcaMaximumEntropy("Label", "Features"));
+
 
             //train your model (make it run the data)
             trainedModel = pipeline.Fit(trainingData);
-            //consume your model (use the model to make predictions)
-            var predictionEngine = ctx.Model.CreatePredictionEngine<DisneylandReview, DisneylandPrediction>(trainedModel);
 
             //capture some text
             var sampleStatement = new DisneylandReview
@@ -43,10 +47,41 @@ namespace DataMining2
                 Branch = "Disneyland_Paris"
             };
 
-            //make a prediction
-            var resultPrediction = predictionEngine.Predict(sampleStatement);
+            var sampleStatement2 = new DisneylandReview
+            {
+                ReviewId = 2801260,
+                Rating = 2,
+                YearMonth = "missing",
+                ReviewerLocation = "United Kingdom",
+                ReviewText = "We've just come back from a couple of days at Eurodisney. I agree with a previous review writer that to the staff at Eurodisney its just a job, whereas at Orlando they do the job because they actually like to do it. That's not belittling all the staff at Paris as some where very helpful, albeit they seemed in the minority.We weren't warned that some of the rides were closed and the fast path tickets ran out early afternoon. Additionally we couldn't get a Park Guide in English as they had all ran out! We booked our tickets over the internet direct with Disney which failed to arrive and we waited 40 minutes to be given replacements on the day. Having been to Disney at Florida early this year perhaps gave us an unfair comparison.Whilst writing   does anyone know what the Halloween song was that was played?We didn't feel that the Park had the same Disney feel as Florida, true it was Halloween there but you could have been anywhere. There were very few characters going around.Having said all that   of course we will go again!!!",
+                Branch = "Disneyland_Paris"
+            };
+
+            var prediction = Predict(sampleStatement2);
+
+            PrintPrediction(prediction, sampleStatement2);
 
             Console.ReadLine();
+        }
+
+        public void PrintPrediction(DisneylandPrediction prediction, DisneylandReview review)
+        {
+            Console.WriteLine($"Review Text: {review.ReviewText}" +
+                 $"\nPredicted rating: {prediction.Label}" +
+                 $"\nActual Rating: {review.Rating}");
+
+            for (int i = 0; i < prediction.Score.Length; i++)
+            {
+                Console.WriteLine($"Score {i + 1}: {prediction.Score[i]}");
+            }
+
+        }
+
+        public DisneylandPrediction Predict(DisneylandReview review)
+        {
+            var predictionEngine = ctx.Model.CreatePredictionEngine<DisneylandReview, DisneylandPrediction>(trainedModel);
+            var resultPrediction = predictionEngine.Predict(review);
+            return resultPrediction;
         }
 
         static void Main(string[] args)
