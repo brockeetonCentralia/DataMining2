@@ -12,11 +12,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="models\" />
-  </ItemGroup>
-
-  <ItemGroup>
     <None Update="data\DisneylandReviews.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="data\TestData.csv">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
