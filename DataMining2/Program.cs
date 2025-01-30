@@ -1,4 +1,6 @@
 ﻿using Microsoft.ML;
+using Microsoft.ML.Data;
+using Microsoft.ML.Transforms;
 using System;
 
 namespace DataMining2
@@ -8,9 +10,12 @@ namespace DataMining2
         private MLContext ctx;
         private string dataPath;
         private string testDataPath;
+        private IDataView testData;
         private IDataView trainingData;
         private string modelPath;
         private ITransformer trainedModel;
+        private EstimatorChain<KeyToValueMappingTransformer> pipeline;
+        private bool IsRunning = true;
 
         //prediction engine (input and output types)
         public Program()
@@ -18,7 +23,6 @@ namespace DataMining2
             //gather any variables and set them
             dataPath = Path.Combine(Environment.CurrentDirectory, "data\\DisneylandReviews.csv");
             testDataPath = Path.Combine(Environment.CurrentDirectory, "data\\TestData.csv");
-
             modelPath = Path.Combine(Environment.CurrentDirectory, "models", "model");
 
             //create a context (connection to the database)
@@ -28,52 +32,106 @@ namespace DataMining2
             trainingData = ctx.Data.LoadFromTextFile<DisneylandReview>(dataPath, hasHeader: true, separatorChar: ',');
 
             //build data pipeline (transforming your data into something that works)
+            CreatePipeline();
 
-            var pipeline = ctx.Transforms.Conversion.MapValueToKey(inputColumnName: "Rating", outputColumnName: "Label")
-                .Append(ctx.Transforms.Text.FeaturizeText(inputColumnName: "ReviewText", outputColumnName: "FeaturizedReviewText"))
-                .Append(ctx.Transforms.Concatenate("Features", "FeaturizedReviewText"))
-                .AppendCacheCheckpoint(ctx)
-                .Append(ctx.MulticlassClassification.Trainers.SdcaMaximumEntropy("Label", "Features"))
-                .Append(ctx.Transforms.Conversion.MapKeyToValue("PredictedLabel"));
+            TrainAndSaveModel();
 
+            while (IsRunning)
+            {
+                Console.Clear();
 
-            //train your model (make it run the data)
-            trainedModel = pipeline.Fit(trainingData);
+                Console.WriteLine("---------------------");
+                Console.WriteLine("Main Menu");
+                Console.WriteLine("---------------------");
+                Console.WriteLine("1. Retrain Model");
+                Console.WriteLine("2. Evaluate Model");
+                Console.WriteLine("3. Predict");
+                Console.WriteLine("4. Exit");
 
-            //save the model
-            SaveModel();
+                int choice = -1;
+                Console.WriteLine("Enter your choice: ");
+                choice = int.Parse(Console.ReadLine());
 
-            //capture some text
-            //var sampleStatement = new DisneylandReview
-            //{
-            //    ReviewId = 2842749,
-            //    Rating = "1",
-            //    YearMonth = "missing",
-            //    ReviewerLocation = "United Kingdom",
-            //    ReviewText = "I will never go to disneyland again. The staff were rude, the park was dirty, and the rides were broken. It was a waste of money.",
-            //    Branch = "Disneyland_Paris"
-            //};
-
-            //var sampleStatement2 = new DisneylandReview
-            //{
-            //    ReviewId = 2801260,
-            //    Rating = "2",
-            //    YearMonth = "missing",
-            //    ReviewerLocation = "United Kingdom",
-            //    ReviewText = "We've just come back from a couple of days at Eurodisney. I agree with a previous review writer that to the staff at Eurodisney its just a job, whereas at Orlando they do the job because they actually like to do it. That's not belittling all the staff at Paris as some where very helpful, albeit they seemed in the minority.We weren't warned that some of the rides were closed and the fast path tickets ran out early afternoon. Additionally we couldn't get a Park Guide in English as they had all ran out! We booked our tickets over the internet direct with Disney which failed to arrive and we waited 40 minutes to be given replacements on the day. Having been to Disney at Florida early this year perhaps gave us an unfair comparison.Whilst writing   does anyone know what the Halloween song was that was played?We didn't feel that the Park had the same Disney feel as Florida, true it was Halloween there but you could have been anywhere. There were very few characters going around.Having said all that   of course we will go again!!!",
-            //    Branch = "Disneyland_Paris"
-            //};
-
-            //var prediction = Predict(sampleStatement);
-
-            //PrintPrediction(prediction, sampleStatement);
-
-            Console.ReadLine();
+                switch (choice)
+                {
+                    case 1:
+                        TrainAndSaveModel();
+                        Console.WriteLine("Model has been retrained and saved. Press enter to continue.");
+                        Console.ReadLine();
+                        break;
+                    case 2:
+                        EvaluateModel();
+                        Console.WriteLine("Press enter to continue...");
+                        Console.ReadLine();
+                        break;
+                    case 3:
+                        MakePrediction();
+                        Console.WriteLine("Press enter to continue...");
+                        Console.ReadLine();
+                        break;
+                    case 4:
+                        IsRunning = false;
+                        break;
+                    default:
+                        Console.WriteLine("Invalid choice: press enter to try again");
+                        Console.ReadLine();
+                        break;
+                }
+            }
         }
 
-        public void SaveModel()
+        private void MakePrediction()
         {
-            ctx.Model.Save(trainedModel, trainingData.Schema, modelPath);
+            Console.WriteLine("Enter a review: ");
+            string reviewText = Console.ReadLine();
+
+            DisneylandReview review = new DisneylandReview()
+            {
+                ReviewText = reviewText
+            };
+
+            var prediction = Predict(review);
+
+            PrintPrediction(prediction, review);
+        }
+
+        private void EvaluateModel()
+        {
+            var schema = trainingData.Schema;
+
+            testData = ctx.Data.LoadFromTextFile<DisneylandReview>(testDataPath, hasHeader: true, separatorChar: ',');
+
+            var testMetrics = ctx.MulticlassClassification.Evaluate(trainedModel.Transform(testData));
+
+            Console.WriteLine($"*************************************************************************************************************");
+            Console.WriteLine($"*       Metrics for Multi-class Classification model - Test Data     ");
+            Console.WriteLine($"*------------------------------------------------------------------------------------------------------------");
+            Console.WriteLine($"*       MicroAccuracy:    {testMetrics.MicroAccuracy:0.###}");
+            Console.WriteLine($"*       MacroAccuracy:    {testMetrics.MacroAccuracy:0.###}");
+            Console.WriteLine($"*       LogLoss:          {testMetrics.LogLoss:#.###}");
+            Console.WriteLine($"*       LogLossReduction: {testMetrics.LogLossReduction:#.###}");
+            Console.WriteLine($"*************************************************************************************************************");
+
+        }
+
+        private void TrainAndSaveModel()
+        {
+            trainedModel = pipeline.Fit(trainingData);
+            SaveModel(ctx, trainingData.Schema, trainedModel);
+        }
+
+        private void CreatePipeline()
+        {
+             var pipeline = ctx.Transforms.Conversion.MapValueToKey(inputColumnName: "Rating", outputColumnName: "Label")
+            .Append(ctx.Transforms.Text.FeaturizeText(inputColumnName: "ReviewText", outputColumnName: "FeaturizedReviewText"))
+            .Append(ctx.Transforms.Concatenate("Features", "FeaturizedReviewText"))
+            .AppendCacheCheckpoint(ctx)
+            .Append(ctx.MulticlassClassification.Trainers.SdcaMaximumEntropy("Label", "Features"))
+            .Append(ctx.Transforms.Conversion.MapKeyToValue("PredictedLabel"));
+        }
+        public void SaveModel(MLContext mLContext, DataViewSchema trainingDataViewSchema, ITransformer model)
+        {
+            mLContext.Model.Save(model, trainingDataViewSchema, modelPath);
         }
 
         public void PrintPrediction(DisneylandPrediction prediction, DisneylandReview review)
